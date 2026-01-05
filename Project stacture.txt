@@ -1,0 +1,272 @@
+# AI-Powered Learning System
+
+FastAPI-based platform for admins, teachers, and students to manage users, syllabus, quizzes, AI/chat, and change requests. Swagger UI available at `/docs`.
+
+## Features (MVP)
+- Role-based auth (admin/teacher/student) with JWT.
+- Admin: add teachers/students, edit details, handle change requests.
+- Teacher: manage syllabus, view students, start class/subject chats, generate quizzes.
+- Student: take quizzes, view results, weak areas, chat with teachers/AI, request profile updates.
+- AI chat adapter (OpenAI-compatible) with offline stub fallback.
+- WebSocket chat threads (class, teacher, AI contexts).
+
+## Project Structure
+- `backend/` FastAPI app (see `backend/app`).
+- `docs/` SRS, architecture, API docs.
+- Diagram: `Ai Powered Learning System(1).drawio`.
+
+## Quickstart (Dev)
+```bash
+cd backend
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env  # set JWT_SECRET and optional OPENAI_API_KEY
+uvicorn app.main:app --reload
+```
+- Default admin: `admin@example.com` / `admin123` (override via env `DEFAULT_ADMIN_EMAIL`, `DEFAULT_ADMIN_PASSWORD`).
+- API base: `http://localhost:8000/api`. Swagger at `/docs`.
+
+## Minimal Workflow
+1) Login as admin → create teachers/students (`POST /api/users`).
+2) Teachers add syllabus items (`POST /api/syllabus`) and generate quizzes (`POST /api/quizzes/generate`).
+3) Students attempt quizzes (`POST /api/quizzes/{id}/attempts`), view weak areas (`GET /api/quizzes/analytics/weak-areas/{student_id}`).
+4) Chat via `/api/chat/threads` + WebSocket `/api/chat/ws/chat/{thread_id}` or AI via `/api/chat/ai`.
+5) Profile change requests: users submit `/api/change-requests`; admin reviews `/api/change-requests/{id}/review`.
+
+## Testing Ideas
+- Use `httpie`/`curl` for REST; `websocat` for WebSocket.
+- Add pytest for services (not yet included).
+
+## Deployment Notes
+- Swap SQLite URL with Postgres in `.env` (`DB_URL=postgresql+psycopg2://user:pass@host/db`).
+- Restrict `allow_origins` in `app.main` for production.
+- Provide `OPENAI_API_KEY` to enable real AI responses.
+
+
+
+
+# Software Requirements Specification (SRS)
+
+## 1. Introduction
+- **Product name:** AI-Powered Learning System
+- **Purpose:** Provide an AI-assisted platform for administrators, teachers, and students to manage learning content, communicate, and personalize assessments.
+- **Scope:** User management, syllabus tracking, quiz generation/evaluation, AI chat assistance, role-based communication, analytics on weak areas, and change-request workflows.
+- **Users:** Admin, Teacher, Student.
+- **Assumptions:** Internet access for AI calls; SMTP/notification provider available; single institution deployment by default.
+
+## 2. Overall Description
+- **Product perspective:** Web application with REST/WebSocket APIs, AI assistant service, and relational database.
+- **User classes & characteristics:**
+  - Admin: manages users, roles, profile updates, reviews change requests.
+  - Teacher: updates syllabus, views students, chats with students, requests admin changes.
+  - Student: takes quizzes, views results/weak areas, chats with AI/teachers, requests updates.
+- **Operating environment:** Modern browser; backend on Linux; database (PostgreSQL/SQLite for dev); AI provider (OpenAI-compatible) via HTTP API.
+- **Constraints:** Role-based access control (RBAC); PII protection; audit logging for profile changes; quizzes must be traceable to syllabus coverage.
+
+## 3. Functional Requirements
+### 3.1 Authentication & Authorization
+- Users sign in with email/password; roles determine permissions (Admin, Teacher, Student).
+- Passwords stored hashed; sessions via JWT/HTTP-only cookies.
+
+### 3.2 User Management (Admin)
+- Add teacher with fields: name, email, password, phone, classes taught, subjects, role, department.
+- Add student with fields: name, email, password, phone, roll number, branch, role.
+- View/update details of teachers and students.
+- Assign/update roles to teachers; deactivate/reactivate accounts.
+
+### 3.3 Change Requests
+- Teachers/students can submit change requests for their details.
+- Admin reviews requests, approves/denies, and responds with a message.
+- Users can view status of their requests.
+
+### 3.4 Syllabus Management (Teacher)
+- Update daily syllabus progress by marking topics complete.
+- Maintain per-class/course syllabus with status and dates.
+
+### 3.5 Student Insights (Teacher)
+- View students of same department/class and their scores, profiles, rankings.
+- Filter by class/year/session.
+
+### 3.6 Communication
+- **Public chat (Teacher ⇄ Students):** One session per class/year; text threads archived.
+- **Public chat (Student ⇄ Teacher):** Subject-wise channels; students can post questions; teachers reply.
+- **AI chat (all roles):** Ask questions; AI answers using course syllabus/context when available.
+- **Notifications:** When change requests are processed, quiz results ready, or chats mentioned.
+
+### 3.7 Assessments
+- Generate quizzes based on completed syllabus topics and students’ weak areas.
+- Students attempt quizzes; time limits; randomized questions.
+- Students view results and explanations for each answer.
+- System analyzes results to identify weak areas by topic/subject/prerequisites.
+
+### 3.8 Profiles
+- Students view/update their profile (non-privileged fields) and see history of quizzes, ranks, weak areas.
+- Teachers view their teaching assignments and syllabus progress.
+
+## 4. Non-Functional Requirements
+- **Security:** Hash passwords (argon2/bcrypt); enforce RBAC; validate inputs; rate-limit auth and chat/quiz generation; audit trails for profile changes and admin actions.
+- **Performance:** ≤300ms p95 for standard API calls; chats streamed; quizzes generated within 5s (with async job fallback).
+- **Availability:** Target 99% for MVP; graceful degradation if AI provider unavailable (use fallback canned responses).
+- **Scalability:** Stateless API; WebSocket gateway; database indexing on user/role/class.
+- **Usability:** Responsive UI; accessible (WCAG AA targets); clear role separation.
+- **Maintainability:** Modular services (auth, user, syllabus, quiz, chat, analytics); typed APIs; automated tests.
+- **Privacy/Compliance:** Minimize PII exposure; allow account deactivation; log access to sensitive fields.
+
+## 5. Data Requirements (initial)
+- User {id, name, email, phone, password_hash, role, department/branch, classes, subjects, roll_no, active, created_at}
+- ChangeRequest {id, user_id, requested_changes (json), status, reviewer_id, reviewer_note, created_at, updated_at}
+- SyllabusItem {id, class_id, subject, topic, status, due_date, completed_at, teacher_id}
+- Quiz {id, class_id, subject, topic_ids[], generated_from, created_at}
+- QuizQuestion {id, quiz_id, prompt, options, answer, explanation, topic_id}
+- QuizAttempt {id, quiz_id, student_id, started_at, submitted_at, score}
+- QuizResponse {attempt_id, question_id, choice, correct, feedback}
+- WeakArea {student_id, topic_id, severity, evidence (attempt refs)}
+- ChatThread {id, scope (class|teacher|ai), subject, owner_id, audience (class/year), created_at}
+- ChatMessage {id, thread_id, sender_id, role, body, created_at}
+
+## 6. External Interfaces
+- **REST API:** JSON over HTTPS for CRUD and assessments.
+- **WebSocket:** Real-time chat; live quiz timer updates.
+- **AI Provider:** OpenAI-compatible completion/chat endpoint; pluggable via adapter.
+- **Email/Notification:** SMTP or webhook-based notification.
+
+## 7. Use Cases (from diagram & derived)
+- Admin: add teacher; add student; view/update user; assign roles; view/respond change requests; AI chat.
+- Teacher: AI chat; view students; chat with students; request profile changes; update syllabus; public chats per class; view rankings.
+- Student: AI chat; view profile; attempt quiz; view results; see weak areas; chat with teachers; request profile changes; class chats.
+
+## 8. Error Handling & Edge Cases
+- AI provider down → cached/fallback responses with warning.
+- Quiz generation timeout → queued job and notify user when ready.
+- Concurrent profile edits → optimistic locking with `updated_at` check.
+- Chat abuse → rate limits and max message length; moderation hook placeholder.
+
+## 9. Acceptance Criteria (MVP)
+- Role-based login working for all roles.
+- Admin can create users and approve change requests; updates persist.
+- Teacher can update syllabus and see roster; students see updated syllabus-dependent quizzes.
+- Student can attempt generated quiz, see scored results and weak-area summary.
+- Chat works for AI (with fallback) and class/teacher channels via WebSocket.
+- Documentation and API reference available in repository.
+
+## 10. Future Enhancements
+- File uploads (notes, assignments), calendar, grading imports, mobile app, analytics dashboard, SSO (OAuth/SAML), LTI integration, content recommendation, plagiarism checks.
+
+
+# Architecture & Implementation Plan
+
+## 1. High-Level Architecture
+- **Frontend:** React (Vite, TypeScript), component library (Mantine/Chakra-free styling), WebSocket for chat, REST for CRUD, protected routes per role.
+- **Backend:** FastAPI (Python), JWT auth, SQLModel/SQLAlchemy with SQLite for dev and PostgreSQL-ready. Celery/BackgroundTasks for quiz generation and AI fallbacks.
+- **AI Adapter:** Pluggable provider (OpenAI-compatible) via environment variable; fallback deterministic stub for offline/dev.
+- **Real-time:** FastAPI WebSocket endpoints; per-thread authorization.
+- **Storage:** Relational DB for users/quizzes/chats/syllabus; Redis optional for websocket presence and rate limits.
+
+## 2. Services / Modules
+- `auth`: signup/import by admin, login, JWT issuance/refresh, password hashing.
+- `users`: CRUD for teachers/students, role assignment, profile update requests, approval workflow.
+- `syllabus`: Track topics per class/subject; update completion; feed quiz generator.
+- `quiz`: Generate quizzes from syllabus + weak areas; store attempts and responses; compute scores/explanations.
+- `analytics`: Derive weak areas from attempts; expose summaries per student/topic.
+- `chat`: Thread + message model; class/teacher public chats; AI chat bridging to provider; rate limiting.
+- `notifications`: Email/webhook stub; in-app notifications for status changes.
+
+## 3. Data Model (tables)
+- User(id, name, email, phone, password_hash, role, department, branch, classes, subjects, roll_no, active, created_at, updated_at)
+- ChangeRequest(id, user_id, requested_changes JSON, status, reviewer_id, reviewer_note, created_at, updated_at)
+- SyllabusItem(id, class_id, subject, topic, status, due_date, completed_at, teacher_id)
+- Quiz(id, class_id, subject, generated_from JSON, created_at)
+- QuizQuestion(id, quiz_id, prompt, options[], answer, explanation, topic)
+- QuizAttempt(id, quiz_id, student_id, started_at, submitted_at, score)
+- QuizResponse(id, attempt_id, question_id, choice, correct, feedback)
+- WeakArea(id, student_id, topic, severity, evidence JSON)
+- ChatThread(id, scope (class|teacher|ai), subject, owner_id, audience JSON, created_at)
+- ChatMessage(id, thread_id, sender_id, role, body, created_at)
+
+## 4. API Surface (initial)
+- `/auth/login`, `/auth/refresh`
+- `/users` (admin create/list/update), `/users/{id}`
+- `/change-requests` (submit by teacher/student), `/change-requests/{id}` (admin review)
+- `/syllabus` (CRUD), `/syllabus/{id}/complete`
+- `/quizzes` (generate), `/quizzes/{id}`, `/quizzes/{id}/attempts`, `/attempts/{id}`
+- `/analytics/weak-areas/{student_id}`
+- `/chat/threads` (list/create), `/chat/threads/{id}/messages` (REST) and `/ws/chat/{thread_id}` (WebSocket)
+- `/ai/chat` (stream/fallback)
+
+## 5. Security & Compliance
+- JWT with role claims; per-endpoint dependency checks.
+- Password hashing (argon2/bcrypt); strong validation; audit log for admin changes.
+- Input size limits; rate limits on chat/quiz generation; CORS locked to frontend origin.
+- PII minimization in logs; secrets via env vars (`OPENAI_API_KEY`, `JWT_SECRET`, `DB_URL`).
+
+## 6. Deployment Plan
+- Dev: Docker Compose (FastAPI + SQLite volume; optional Redis), Vite dev server.
+- Prod: Postgres + FastAPI behind reverse proxy; static frontend build served via CDN or gateway.
+- Observability: Structured logging (JSON), request ids, basic health check `/health`.
+
+## 7. Testing Strategy
+- Backend: pytest for services, API tests with TestClient, data factories; property tests for quiz scoring.
+- Frontend: Vitest + Testing Library for components and hooks.
+- E2E: Playwright basic flows (login, quiz, chat).
+
+## 8. Delivery Phases (repo tasks)
+1) Bootstrap repo (backend + frontend folders, tooling, env example).
+2) Implement auth + user management + change requests.
+3) Syllabus + quiz generation + attempts + analytics.
+4) Chat (AI + class/teacher channels) via WebSocket.
+5) Polish: notifications stub, docs, tests, Docker Compose.
+
+## 9. Documentation Plan
+- `README.md`: quickstart, env vars, run commands, architecture sketch.
+- `docs/SRS.md`: requirements (this SRS).
+- `docs/Architecture.md`: this plan + updates.
+- `docs/API.md`: endpoint details (to be added after implementation).
+
+
+# API Reference (MVP)
+
+Base URL: `http://localhost:8000/api`
+
+## Auth
+- `POST /auth/login` — OAuth2 password flow (form fields: `username`, `password`). Returns bearer token.
+
+## Users
+- `GET /users/me` — Current user profile.
+- `POST /users` — Admin creates user (body: UserCreate).
+- `GET /users?role=student&department=CS` — Admin or teacher lists users; teachers are limited to students.
+- `PATCH /users/{id}` — Admin updates user fields.
+
+## Change Requests
+- `POST /change-requests` — Submit profile change request (any user).
+- `GET /change-requests` — Admin list all.
+- `GET /change-requests/mine` — Current user's requests.
+- `POST /change-requests/{id}/review` — Admin approve/deny.
+
+## Syllabus
+- `POST /syllabus` — Teacher/Admin create item.
+- `GET /syllabus?class_id=IX-A` — List items.
+- `PATCH /syllabus/{id}` — Update status/fields.
+
+## Quizzes
+- `POST /quizzes/generate` — Teacher/Admin generate quiz from topics.
+- `GET /quizzes?class_id=IX-A` — List quizzes.
+- `POST /quizzes/{id}/attempts` — Student submits answers `{ "answers": {questionId: "choice"} }`.
+- `GET /quizzes/analytics/weak-areas/{student_id}` — Compute weak areas.
+
+## Chat
+- `POST /chat/threads` — Create chat thread (class/teacher/ai scope).
+- `GET /chat/threads` — List threads.
+- `POST /chat/threads/{thread_id}/messages` — Post message to thread.
+- `WS /chat/ws/chat/{thread_id}` — WebSocket for live chat (send JSON `{user_id, body}`).
+- `POST /chat/ai` — AI chat endpoint `{ "message": "...", "syllabus_context": [] }`.
+
+## Health
+- `GET /health` — Service check.
+
+## Notes
+- Include `Authorization: Bearer <token>` header for protected routes.
+- OpenAPI docs auto-available at `http://localhost:8000/docs`.
+
+
+
+
